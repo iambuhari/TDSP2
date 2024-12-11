@@ -1,3 +1,18 @@
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#   "os",
+#   "sys",
+#   "pandas",
+#   "numpy",
+#   "seaborn",
+#   "matplotlib",
+#   "openai",
+#   "dotenv",
+#   "requests",
+#   "chardet",
+# ]
+# ///
 import os
 import sys
 import pandas as pd
