@@ -22,7 +22,7 @@ def load_data(file_path):
 
 def basic_analysis(data):
     summary = {
-        "shape": data.shape,
+        "shape": data.shape,        
         "columns": data.dtypes.to_dict(),
         "missing_values": data.isnull().sum().to_dict(),
         "summary_statistics": data.describe(include='all').to_dict()
@@ -181,8 +181,8 @@ def interact_with_llm(task_type, data_context):
         print(f"Error querying LLM: {e}")
         return None
 
-def generate_readme(data, summary, charts, llm_insights, output_path):
-    with open(output_path, "w") as f:
+def generate_readme(data, summary, charts, llm_insights,charts_folder, output_path):
+    with open(charts_folder+"\\"+output_path, "w") as f:
         f.write("# Automated Data Analysis\n\n")
         f.write("## Dataset Overview\n")
         f.write(f"Shape: {summary['shape']}\n\n")
@@ -230,45 +230,19 @@ def main():
 
     print("Consulting the LLM for insights...")
     llm_prompt = (
-        f"I have a dataset with the following columns and types: {summary['columns']}\\n"
-        f"Here are some summary statistics: {summary['summary_statistics']}\\n"
-        f"Can you provide insights and suggest further analysis?"
+        f"You are a data analyst. Summarize the insights from this dataset:\n"
+            f"Filename: {file_path}\n"
+            f"Columns and Data Types: {summary['columns']}\n"           
+            f"Sample data:{data.iloc[0]}\\n"
+            f"Summary statistics: {summary['summary_statistics']}\n"
     )
     llm_insights = query_llm(llm_prompt)
 
     print("Generating README.md...")
     charts = [heatmap_path] + [os.path.join(charts_folder, f"distribution_{col}.png") for col in data.select_dtypes(include=[np.number]).columns]
-    generate_readme(data, summary, charts, llm_insights, "README.md")
+    generate_readme(data, summary, charts, llm_insights,charts_folder, "README.md")
 
     print(f"Analysis complete. Results saved to README.md and visualizations saved in the '{charts_folder}' folder.")
     
-    print("Gathering dataset context...")
-    context = gather_context(data, os.path.basename(file_path))
-
-    # Ask the LLM to summarize the dataset
-    print("Asking LLM for a summary of the dataset...")
-    summary_response = interact_with_llm("summary", context)
-    print("Summary from LLM:")
-    print(summary_response)
-
-    # Ask the LLM to suggest Python code for further analysis
-    print("Asking LLM for Python code suggestions...")
-    code_response = interact_with_llm("code", context)
-    print("Code from LLM:")
-    print(code_response)
-
-    # Execute the suggested code (with caution)
-    try:
-        print("Executing LLM-generated code...")
-        exec(code_response)
-    except Exception as e:
-        print(f"Error executing LLM-generated code: {e}")
-
-    # Ask the LLM for specific function calls
-    print("Asking LLM for additional function call suggestions...")
-    functions_response = interact_with_llm("function_call", context)
-    print("Function call suggestions from LLM:")
-    print(functions_response)
-
 if __name__ == "__main__":
     main()
