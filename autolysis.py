@@ -6,10 +6,10 @@
 #   "seaborn",
 #   "matplotlib",
 #   "openai",
-#   "dotenv",
+#   "python-dotenv",
 #   "requests",
 #   "chardet",
-#   "sklearn",
+#   "scikit-learn",
 #   "statsmodels",
 #   "scipy"
 # ]
