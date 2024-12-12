@@ -11,7 +11,8 @@
 #   "chardet",
 #   "scikit-learn",
 #   "statsmodels",
-#   "scipy"
+#   "scipy",
+#   "tiktoken"
 # ]
 # ///
 import os
@@ -32,6 +33,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.cluster import KMeans
 from scipy.stats import zscore
 from sklearn.metrics import silhouette_score
+import tiktoken
 
 def load_data(file_path):
     """
@@ -194,9 +196,7 @@ def interact_with_llm(task_type, datadata_imputed,filename):
     prompt = generate_dynamic_prompt(datadata_imputed,filename)
     if task_type == "code":
         prompt += (
-            f"Generate Python code to analyze this dataset further. Do not add anything other than python code. \\n"
-            f"Include code to detect encoding of the csv file and use the same encoding\\n"
-            f"Dataset may have non-numeric. Exclude them while performing numeric analysis\\n"
+            f"Generate Python code to analyze this dataset further.\\n"         
         )
     elif task_type == "summary":
         prompt += (
@@ -271,11 +271,15 @@ def generate_dynamic_prompt(data_context,filename):
         str: A context-aware prompt for the LLM.
     """
     summary=gather_context(data_context,filename)
-    prompt = "You are a data analysis assistant. Here is a summary of the dataset:\n"
+    # Extract the first 5 key-value pairs from the dictionary
+    first_five_columns = list(summary['columns'].items())[:5]
+
+    # Format the key-value pairs as a string
+    formatted_columns = ', '.join([f"{key}: {value}" for key, value in first_five_columns])
+    prompt = "You are a data analysis assistant.\n"
     prompt += (
-            f"Filename: {summary['filename']}\n"
-            f"Columns: {summary['columns']}\n"
-            f"missing_values:{summary['missing_values']}"
+            f"Name of the dataset is '{summary['filename']}' has Columns:{formatted_columns}.\n"
+            #f"missing_values:{summary['missing_values']}"
             f"Summary statistics: {summary['summary']}\n"
             )
     numeric_cols = data_context.select_dtypes(include=[np.number]).columns.tolist()
@@ -295,8 +299,89 @@ def generate_dynamic_prompt(data_context,filename):
     if categorical_cols:
         prompt += f"- Categorical columns: {categorical_cols}\n"
         prompt += "- Suggest clustering or pattern recognition techniques for categorical data.\n"
-
+        
+    print(f"Token count:{evaluate_prompt_efficiency(prompt)}")
+    
     return prompt
+def agentic_workflow(data):
+    """
+    Implements a multi-step workflow for data analysis using the LLM.
+
+    Args:
+        data (DataFrame): The dataset to analyze.
+
+    Returns:
+        None
+    """
+    numeric_data = data.select_dtypes(include=[np.number])
+    # Step 1: Initial data exploration
+    prompt = "Provide an exploratory analysis of this dataset."
+    prompt += f"Summary statistics: {data.describe()}"
+    prompt += f"Correlation: {numeric_data.corr()}"
+    insights = query_llm(prompt)
+
+    # Step 2: Generate targeted insights
+    follow_up_prompt = f"Based on your analysis: {insights}\nSuggest specific analyses or transformations."
+    suggestions = query_llm(follow_up_prompt)
+
+    # Execute suggestions and collect results
+    analysis_results = []
+    # Step 3: Execute suggestions iteratively
+    for suggestion in suggestions.split('\n'):
+        result=execute_analysis_suggestion(data, suggestion)
+        analysis_results.append(result)
+    return analysis_results
+
+def execute_analysis_suggestion(data, suggestion):
+    """
+    Executes a single suggestion from the LLM and returns the analysis summary.
+
+    Args:
+        data (DataFrame): The dataset to analyze.
+        suggestion (str): Analysis suggestion to execute.
+
+    Returns:
+        str: A summary of the analysis performed.
+    """
+    if "outliers" in suggestion.lower():
+        from sklearn.ensemble import IsolationForest
+        numeric_data = data.select_dtypes(include=[np.number])
+        outliers = IsolationForest().fit_predict(numeric_data)
+        num_outliers = sum(outliers == -1)
+        return f"Outlier Detection: Identified {num_outliers} outliers in the dataset."
+    
+    elif "pca" in suggestion.lower():
+        from sklearn.decomposition import PCA
+        numeric_data = data.select_dtypes(include=[np.number])
+        pca = PCA(n_components=2)
+        pca_result = pca.fit_transform(numeric_data)
+        explained_variance = pca.explained_variance_ratio_
+        return (f"PCA Analysis: Reduced the dataset to 2 components. "
+                f"Explained variance ratios are {explained_variance[0]:.2f} and {explained_variance[1]:.2f}.")
+    
+    elif "correlation" in suggestion.lower():
+        numeric_data = data.select_dtypes(include=[np.number])
+        correlation_matrix = numeric_data.corr()
+        return "Correlation Analysis: Computed the correlation matrix for numeric features."
+    
+    else:
+        return f"Analysis '{suggestion}' could not be executed or is not supported."
+
+def evaluate_prompt_efficiency(prompt):
+    """
+    Evaluates the token usage of a given prompt.
+
+    Args:
+        prompt (str): The LLM prompt to evaluate.
+
+    Returns:
+        int: The number of tokens used.
+    """
+    # Assuming a tokenizer is available for the LLM being used
+    
+    tokenizer = tiktoken.encoding_for_model("gpt-4o-mini")
+    tokens = len(tokenizer.encode(prompt))
+    return tokens
 
 def validate_llm_code(code):
     """
@@ -395,15 +480,18 @@ def apply_LLM_analysis_generate_readme(data_imputed,file_path,charts_folder,best
     print("Asking LLM for additional function call suggestions...")
     functions_response = interact_with_llm("function_call", data_imputed,file_path)
     
+    #Implements a multi-step workflow for data analysis using the LLM. 
+    analysis_results= agentic_workflow(data_imputed)
+    
     #Generate image of the distribution
     charts = [os.path.join(charts_folder, f"distribution_{col}.png") for col in data_imputed.select_dtypes(include=[np.number]).columns if col in best_columns]
     print("Generating README.md...")
     
-    generate_readme(data_imputed, summary, charts, summary_response,code_response,functions_response, charts_folder)
+    generate_readme(data_imputed, summary, charts, summary_response,code_response,functions_response, analysis_results,charts_folder)
 
     print(f"Analysis complete. Results saved to README.md and visualizations saved in the '{charts_folder}' folder.")
     
-def generate_readme(data, summary, charts, summary_response,code_response,functions_response,charts_folder):
+def generate_readme(data, summary, charts, summary_response,code_response,functions_response,analysis_results,charts_folder):
     """
     Generates a README.md file summarizing the results of data analysis.
 
@@ -434,6 +522,9 @@ def generate_readme(data, summary, charts, summary_response,code_response,functi
 
         f.write("\n## Insights from the LLM\n")
         f.write(f"{summary_response}\n\n")
+        f.write("\n## Analysis Results\n")
+        for result in analysis_results:
+            f.write(f"- {result}\n")
         
         f.write("\n## Python Code suggested by LLM for further analysis\n")
         f.write(f"{code_response}\n\n")
