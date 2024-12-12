@@ -92,8 +92,9 @@ def gather_context(data, filename):
     """
     context = {
         "filename": filename,
-        "columns": list(data.columns),
-        "dtypes": data.dtypes.to_dict(),
+        "shape": data.shape,  
+        "columns": data.dtypes.to_dict(),
+        "missing_values": data.isnull().sum().to_dict(),
         "summary": data.describe(include="all").to_dict(),
     }
     return context
@@ -115,7 +116,7 @@ def interact_with_llm(task_type, data_context):
             f"You are a Python data analysis assistant. I have the following dataset:\n"
             f"Filename: {data_context['filename']}\n"
             f"Columns: {data_context['columns']}\n"
-            f"Data types: {data_context['dtypes']}\n"
+            #f"Data types: {data_context['dtypes']}\n"
             f"Summary statistics: {data_context['summary']}\n"
             f"Generate Python code to analyze this dataset further and provide insights."
         )
@@ -124,7 +125,7 @@ def interact_with_llm(task_type, data_context):
             f"You are a data analyst. Summarize the insights from this dataset:\n"
             f"Filename: {data_context['filename']}\n"
             f"Columns: {data_context['columns']}\n"
-            f"Data types: {data_context['dtypes']}\n"
+            #f"Data types: {data_context['dtypes']}\n"
             f"Summary statistics: {data_context['summary']}\n"
         )
     elif task_type == "function_call":
@@ -132,7 +133,7 @@ def interact_with_llm(task_type, data_context):
             f"You are a data scientist. I have the following dataset:\n"
             f"Filename: {data_context['filename']}\n"
             f"Columns: {data_context['columns']}\n"
-            f"Data types: {data_context['dtypes']}\n"
+            #f"Data types: {data_context['dtypes']}\n"
             f"Summary statistics: {data_context['summary']}\n"
             f"Suggest specific Python function calls or analyses that can extract more insights."
         )
@@ -170,7 +171,7 @@ def query_llm(prompt):
     api_key = os.getenv("AIPROXY_TOKEN")
     try:
         response = requests.post(
-            "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions",
+            "https://api.openai.com/v1/chat/completions",
             headers={"Authorization": f"Bearer {api_key}"},
             json={
                 "model": "gpt-4o-mini",
@@ -281,8 +282,8 @@ def main():
     # Ask the LLM to suggest Python code for further analysis
     print("Asking LLM for Python code suggestions...")
     code_response = interact_with_llm("code", summary)
-    #print("Code from LLM:")
-    #print(code_response)
+    print("Code from LLM:")
+    print(code_response)
 
     # Execute the suggested code (with caution)
     try:
