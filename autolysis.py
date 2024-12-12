@@ -118,7 +118,9 @@ def interact_with_llm(task_type, data_context):
             f"Columns: {data_context['columns']}\n"
             #f"Data types: {data_context['dtypes']}\n"
             f"Summary statistics: {data_context['summary']}\n"
-            f"Generate Python code to analyze this dataset further and provide insights."
+            f"Generate Python code to analyze this dataset further. Do not add anything other than python code. \\n"
+            f"Include code to detect encoding of the csv file and use the same encoding"
+            f"Dataset may have non-numeric. Exclude them while performing numeric analysis"
         )
     elif task_type == "summary":
         prompt = (
@@ -171,7 +173,7 @@ def query_llm(prompt):
     api_key = os.getenv("AIPROXY_TOKEN")
     try:
         response = requests.post(
-            "https://api.openai.com/v1/chat/completions",
+            "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {api_key}"},
             json={
                 "model": "gpt-4o-mini",

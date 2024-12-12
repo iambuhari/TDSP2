@@ -4,8 +4,7 @@
 Shape: (2363, 11)
 
 ### Columns and Data Types
-- Country name: object
-- year: int64
+- year: float64
 - Life Ladder: float64
 - Log GDP per capita: float64
 - Social support: float64
@@ -15,68 +14,70 @@ Shape: (2363, 11)
 - Perceptions of corruption: float64
 - Positive affect: float64
 - Negative affect: float64
+- Country name: object
 
 ### Missing Values
-- Country name: 0 missing values
 - year: 0 missing values
 - Life Ladder: 0 missing values
-- Log GDP per capita: 28 missing values
-- Social support: 13 missing values
-- Healthy life expectancy at birth: 63 missing values
-- Freedom to make life choices: 36 missing values
-- Generosity: 81 missing values
-- Perceptions of corruption: 125 missing values
-- Positive affect: 24 missing values
-- Negative affect: 16 missing values
+- Log GDP per capita: 0 missing values
+- Social support: 0 missing values
+- Healthy life expectancy at birth: 0 missing values
+- Freedom to make life choices: 0 missing values
+- Generosity: 0 missing values
+- Perceptions of corruption: 0 missing values
+- Positive affect: 0 missing values
+- Negative affect: 0 missing values
+- Country name: 0 missing values
 
 ## Insights from the LLM
-Based on the dataset `happiness.csv`, here are the key insights:
+Here are the insights derived from the dataset `happiness.csv`, which includes 2363 records across various years (2005-2023) and measures related to happiness and well-being in different countries:
 
-### General Overview
+### Summary Statistics:
+- **Year**:
+  - The average year is approximately 2014.8, indicating a range from 2005 to 2023, which suggests the dataset might cover several years of data.
 
-- **Data Entries**: The dataset consists of a total of 2,363 entries covering various countries and years, from 2005 to 2023.
-- **Unique Countries**: There are 165 unique countries represented, with Lebanon being the most frequently recorded country (18 occurrences).
+- **Life Ladder**:
+  - The average score on the Life Ladder (an indicator of subjective well-being) is 5.48, with a wide range from 1.28 to 8.02. 
+  - There is a standard deviation of 1.13, indicating moderate variability in happiness levels across countries.
 
-### Summary Statistics
+- **Log GDP per capita**:
+  - The average Log GDP per capita is approximately 9.40, ranging from 5.53 to 11.68. This suggests significant economic variability across the countries in the dataset.
 
-1. **Life Ladder**:
-   - **Mean**: 5.48 (with a standard deviation of approximately 1.13), indicating the average perceived happiness level on a scale of 0 to 10.
-   - **Range**: Values range from a minimum of 1.28 to a maximum of 8.02, showing significant variation in happiness across countries.
+- **Social Support**:
+  - On average, social support is scored at 0.81, with scores ranging from 0.23 to 0.99, indicating a generally high perceived social support across the observed countries.
 
-2. **Log GDP per Capita**:
-   - **Mean**: 9.40 (standard deviation of about 1.15), which illustrates the average economic well-being per capita.
-   - **Range**: The log GDP per capita varies from 5.53 to 11.68, indicating disparities in economic prosperity.
+- **Healthy Life Expectancy**:
+  - The mean healthy life expectancy at birth is about 63.4 years, with a range between 6.72 years and 74.6 years, indicating wide variations in health outcomes.
 
-3. **Social Support**:
-   - **Mean**: 0.81 (standard deviation of approximately 0.12), suggesting a generally high level of social support among the populations surveyed.
-   - **Range**: Values span from 0.23 to 0.99, reflecting differences in the social structures of countries.
+- **Freedom to Make Life Choices**:
+  - The average score is 0.75, with a range from 0.23 to 0.99, suggesting that, on average, people feel a moderate level of freedom in making choices.
 
-4. **Healthy Life Expectancy at Birth**:
-   - **Mean**: 63.40 years (standard deviation of about 6.84), with a range from 6.72 years to 74.60 years.
-   - This metric shows considerable variation and may correlate with health systems and quality of life.
+- **Generosity**:
+  - The average score for generosity is very low at about 0.0001, suggesting either limited altruistic behavior across the dataset or potential issues in the measure used.
 
-5. **Freedom to Make Life Choices**:
-   - **Mean**: 0.75 (standard deviation of about 0.14), implying that many people feel they have the freedom to make personal choices.
-   - **Range**: Between 0.23 and 0.99, which showcases differing levels of perceived freedoms across nations.
+- **Perceptions of Corruption**:
+  - The mean perception of corruption score is 0.74, with a relatively good spread from 0.04 to 0.98. Higher scores indicate worse perceptions of corruption.
 
-6. **Generosity**:
-   - **Mean**: 0.000098 (nearly zero), with a wide range (-0.34 to 0.70) indicating varying perceptions of generosity.
-   - This could reflect cultural differences in charitable behavior or societal norms related to giving.
+- **Positive Affect**:
+  - The score for positive affect averages 0.65, suggesting moderate levels of positive emotional experiences among populations.
 
-7. **Perceptions of Corruption**:
-   - **Mean**: 0.74 (standard deviation of approximately 0.18), suggesting moderate to high perceptions of corruption among respondents across countries.
-   - **Range**: From 0.035 to 0.98, indicating substantial differences in how corruption is perceived.
+- **Negative Affect**:
+  - With an average score of 0.27 and ranging up to 0.71, this indicates low to moderate levels of negative emotions.
 
-8. **Positive and Negative Affect**:
-   - **Positive Affect Mean**: 0.65 (standard deviation of about 0.11), reflecting moderate positive feelings.
-   - **Negative Affect Mean**: 0.27 (standard deviation of around 0.09), indicating lower levels of negative feelings on average.
-   - The ranges for positive affect (0.18 to 0.88) and negative affect (0.08 to 0.71) show the emotional variability experienced by different populations.
+### Country Insights:
+- The dataset includes responses from 165 different countries, with 'Argentina' having the most records (18 entries), highlighting that data might be unevenly distributed among countries.
 
-### Conclusion
+### Variability and Relationships:
+- High variability across multiple indicators suggests that some countries are significantly happier, wealthier, or healthier than others.
+- Metrics such as GDP per capita, social support, and personal freedom could be assessed further to identify correlations with the Life Ladder scores to understand their impact on happiness.
 
-The analysis of the `happiness.csv` dataset reveals significant insights into the factors influencing happiness around the world, such as economic conditions (GDP), social structures (social support and freedom), health indicators (life expectancy), and emotional dimensions (positive and negative affects). The data indicates considerable disparities between different countries, demonstrating the complex interplay of various elements that contribute to well-being and life satisfaction.
+### Conclusion:
+The dataset encapsulates a broad analysis of happiness and well-being across diverse countries, showing that economic, social, and health-related factors vary widely and can influence overall happiness. More detailed exploration and correlation analyses could yield deeper insights into the determinants of happiness across these countries.
 
 ## Visualizations
+1. 'correlation_heatmap.png': Correlation heatmap of features.
+2. 'pca_explained_variance.png': PCA variance explanation.
+3. 'cluster_visualization.png': Cluster analysis scatterplot.
 ![happiness\correlation_heatmap.png](happiness\correlation_heatmap.png)
 ![happiness\distribution_year.png](happiness\distribution_year.png)
 ![happiness\distribution_Life Ladder.png](happiness\distribution_Life Ladder.png)
