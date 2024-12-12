@@ -165,12 +165,12 @@ def generate_distribution_plots(data, folder_path, selected_columns):
         file_path = os.path.join(folder_path, f"distribution_{column}.png")
         plt.savefig(file_path)
         plt.close()
-# "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions",
+# "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions",https://api.openai.com/v1/chat/completions
 def query_llm(prompt):
     api_key = os.getenv("AIPROXY_TOKEN")
     try:
         response = requests.post(
-            "https://api.openai.com/v1/chat/completions",
+            "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {api_key}"},
             json={
                 "model": "gpt-4o-mini",
