@@ -138,7 +138,7 @@ def gather_context(data, filename):
     }
     return context
 #https://aiproxy.sanand.workers.dev/openai/v1/chat/completions
-#https://api.openai.com/openai/v1/chat/completions
+#https://api.openai.com/v1/chat/completions
 def query_llm(prompt):
     """
     Sends a prompt to the LLM API and retrieves the response.
@@ -259,41 +259,7 @@ def generate_distribution_plots(data, output_path, selected_columns):
     plt.close()
 
 # "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions",https://api.openai.com/v1/chat/completions
-def generate_readme(data, summary, charts, llm_insights,output_path):
-    """
-    Generates a README.md file summarizing the results of data analysis.
-
-    Args:
-        data (DataFrame): The dataset being analyzed.
-        summary (dict): Summary statistics and metadata about the dataset.
-        charts (list): List of file paths to generated visualizations.
-        llm_insights (str): Analytical insights provided by the LLM.
-        output_path (str): The path where the README file will be saved.
-
-    Returns:
-        None
-    """
-    with open(output_path, "w") as f:
-        f.write("# Automated Data Analysis\n\n")
-        f.write("## Dataset Overview\n")
-        f.write(f"Shape: {summary['shape']}\n\n")
-        f.write("### Columns and Data Types\n")
-        for col, dtype in summary["columns"].items():
-            f.write(f"- {col}: {dtype}\n")
-
-        f.write("\n### Missing Values\n")
-        for col, missing in summary["missing_values"].items():
-            f.write(f"- {col}: {missing} missing values\n")
-
-        f.write("\n## Insights from the LLM\n")
-        f.write(f"{llm_insights}\n\n")
-
-        f.write("## Visualizations\n")
-        f.write("1. 'correlation_heatmap.png': Correlation heatmap of features.\n")
-        f.write("2. 'pca_explained_variance.png': PCA variance explanation.\n")
-        f.write("3. 'cluster_visualization.png': Cluster analysis scatterplot.\n")
-        for chart in charts:
-            f.write(f"![{chart}]({chart})\n")
+           
 def generate_dynamic_prompt(data_context,filename):
     """
     Creates a tailored prompt for the LLM based on dataset characteristics.
@@ -348,24 +314,21 @@ def validate_llm_code(code):
             print(f"Potentially unsafe operation detected: {keyword}")
             return False
     return True
-def main():
-    if len(sys.argv) != 2:
-       print("Usage: uv run autolysis.py <dataset.csv>")
-       sys.exit(1)
-
-    load_dotenv()
-
-    file_path = sys.argv[1]#'goodreads.csv' #sys.argv[1]
-    data = load_data(file_path)
-    # Create a folder named after the dataset (without extension)
+def create_analysis_folder(file_path):
+    # Create a folder for storing analysis results, named after the dataset (without its file extension)
+    # Extract the dataset name from the file path by removing the extension
     dataset_name = os.path.splitext(os.path.basename(file_path))[0]
     charts_folder = dataset_name
     os.makedirs(charts_folder, exist_ok=True)
-    
-    #data_cleaned = data.dropna()
+    return charts_folder
+
+def impute_data(raw_data):
+    #Handle missing data by imputing missing values for both numeric and categorical columns
+
+    data_cleaned = raw_data.dropna()
     # Separate numeric and categorical columns
-    numeric_data = data.select_dtypes(include=[np.number])
-    categorical_data = data.select_dtypes(exclude=[np.number])
+    numeric_data = data_cleaned.select_dtypes(include=[np.number])
+    categorical_data = data_cleaned.select_dtypes(exclude=[np.number])
 
     # Impute numeric data with the mean
     numeric_imputer = SimpleImputer(strategy='mean')
@@ -379,38 +342,30 @@ def main():
 
     # Combine the data back together
     data_imputed = pd.concat([numeric_data_imputed, categorical_data_imputed], axis=1)
-    
-    print("Gathering dataset context...")
-    summary = gather_context(data_imputed, os.path.basename(file_path))
-    
-    print("Selecting the best columns for visualization...")
-    target_column = None  # Replace with the target column name if applicable
-    best_columns = select_best_columns(data_imputed, target=target_column, max_columns=3)
-    
-    print("Generating visualizations...")
+    return data_imputed
+
+def do_correlation_analysis(data_imputed,charts_folder):
+    # Generate and save a correlation heatmap for the imputed data, and extract top correlations
     heatmap_path = os.path.join(charts_folder, "correlation_heatmap.png")
+    # Create a correlation heatmap and save it as a PNG image
     correlation_matrix = generate_correlation_heatmap(data_imputed, heatmap_path)
+    
+    # Unstack the correlation matrix and reset index for better readability
     correlations = correlation_matrix.unstack().reset_index()
     correlations.columns = ['Variable1', 'Variable2', 'Correlation']
-    correlations = correlations[correlations['Variable1'] != correlations['Variable2']]  # Remove self-correlations
+    
+    # Remove self-correlations (correlations of a variable with itself)
+    correlations = correlations[correlations['Variable1'] != correlations['Variable2']]
+    
+    # Add an absolute correlation column for sorting
     correlations['AbsCorrelation'] = correlations['Correlation'].abs()
+    
+    # Sort correlations by absolute value and extract the top 3 correlations
     top_correlations = correlations.sort_values(by='AbsCorrelation', ascending=False).head(3)
+    
+def execute_LLM_code(code_response):
+    # Validate and execute the code generated by a large language model (LLM)
 
-    generate_distribution_plots(data_imputed, charts_folder, best_columns)
-
-     # Ask the LLM to summarize the dataset
-    print("Asking LLM for a summary of the dataset...")
-    summary_response = interact_with_llm("summary", data_imputed,file_path)
-    #print("Summary from LLM:")
-    #print(summary_response)
-
-    # Ask the LLM to suggest Python code for further analysis
-    print("Asking LLM for Python code suggestions...")
-    code_response = interact_with_llm("code", data_imputed,file_path)
-    print("Code from LLM:")
-    print(code_response)
-
-    # Execute the suggested code (with caution)
     try:
         print("validating LLM-generated code...")
         valid_code = validate_llm_code(code_response)
@@ -421,19 +376,99 @@ def main():
             print("unsafe code..")
     except Exception as e:
         print(f"Error executing LLM-generated code: {e}")
-
+def apply_LLM_analysis_generate_readme(data_imputed,file_path,charts_folder,best_columns):
+    print("Gathering dataset context...")
+    summary = gather_context(data_imputed, os.path.basename(file_path))
+    
+    # Ask the LLM to summarize the dataset
+    print("Asking LLM for a summary of the dataset...")
+    summary_response = interact_with_llm("summary", data_imputed,file_path)
+    
+    # Ask the LLM to suggest Python code for further analysis
+    print("Asking LLM for Python code suggestions...")
+    code_response = interact_with_llm("code", data_imputed,file_path)
+    
+    # Execute the suggested code (with caution)
+    execute_LLM_code(code_response)
+    
     # Ask the LLM for specific function calls
     print("Asking LLM for additional function call suggestions...")
     functions_response = interact_with_llm("function_call", data_imputed,file_path)
-    print("Function call suggestions from LLM:")
-    print(functions_response)
-
+    
+    #Generate image of the distribution
+    charts = [os.path.join(charts_folder, f"distribution_{col}.png") for col in data_imputed.select_dtypes(include=[np.number]).columns if col in best_columns]
     print("Generating README.md...")
-    charts = [heatmap_path] + [os.path.join(charts_folder, f"distribution_{col}.png") for col in data.select_dtypes(include=[np.number]).columns]
-    readme_path = os.path.join(charts_folder, "README.md")
-    generate_readme(data_imputed, summary, charts, summary_response, readme_path)
+    
+    generate_readme(data_imputed, summary, charts, summary_response,code_response,functions_response, charts_folder)
 
     print(f"Analysis complete. Results saved to README.md and visualizations saved in the '{charts_folder}' folder.")
     
+def generate_readme(data, summary, charts, summary_response,code_response,functions_response,charts_folder):
+    """
+    Generates a README.md file summarizing the results of data analysis.
+
+    Args:
+        data (DataFrame): The dataset being analyzed.
+        summary (dict): Summary statistics and metadata about the dataset.
+        charts (list): List of file paths to generated visualizations.
+        summary_response (str): Analytical insights provided by the LLM.
+        code_response (str): Python code provided by the LLM.
+        functions_response (str): Function API suggested provided by LLM.
+        output_path (str): The path where the README file will be saved.
+
+    Returns:
+        None
+    """
+    output_path = os.path.join(charts_folder, "README.md")
+    with open(output_path, "w") as f:
+        f.write("# Automated Data Analysis\n\n")
+        f.write("## Dataset Overview\n")
+        f.write(f"Shape: {summary['shape']}\n\n")
+        f.write("### Columns and Data Types\n")
+        for col, dtype in summary["columns"].items():
+            f.write(f"- {col}: {dtype}\n")
+
+        f.write("\n### Missing Values\n")
+        for col, missing in summary["missing_values"].items():
+            f.write(f"- {col}: {missing} missing values\n")
+
+        f.write("\n## Insights from the LLM\n")
+        f.write(f"{summary_response}\n\n")
+        
+        f.write("\n## Python Code suggested by LLM for further analysis\n")
+        f.write(f"{code_response}\n\n")
+        
+        f.write("\n## Function API suggested by LLM for further analysis and insights\n")
+        f.write(f"{functions_response}\n\n")
+
+        f.write("## Visualizations\n")
+        for chart in charts:
+            f.write(f"![{chart}]({chart})\n")
+def main():
+    if len(sys.argv) != 2:
+       print("Usage: uv run autolysis.py <dataset.csv>")
+       sys.exit(1)
+
+    load_dotenv()
+
+    file_path = sys.argv[1]#'goodreads.csv' #sys.argv[1]
+    raw_data = load_data(file_path)
+    # Create a folder named after the dataset (without extension)
+    charts_folder = create_analysis_folder(file_path)
+    
+    # Do Data cleansing
+    data_imputed = impute_data(raw_data)    
+ 
+    print("Selecting the best columns for visualization...")
+    target_column = None  # Replace with the target column name if applicable
+    best_columns = select_best_columns(data_imputed, target=target_column, max_columns=3)
+    
+    print("Generating visualizations...")
+    do_correlation_analysis(data_imputed,charts_folder)
+    
+    generate_distribution_plots(data_imputed, charts_folder, best_columns)
+    
+    apply_LLM_analysis_generate_readme(data_imputed,file_path,charts_folder,best_columns)
+
 if __name__ == "__main__":
     main()
