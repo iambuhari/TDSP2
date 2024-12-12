@@ -11,6 +11,7 @@
 #   "chardet",
 #   "sklearn",
 #   "statsmodels"
+#   "scipy"
 # ]
 # ///
 import os
@@ -29,6 +30,8 @@ from statsmodels.tsa.seasonal import seasonal_decompose
 from sklearn.decomposition import PCA
 from sklearn.impute import SimpleImputer
 from sklearn.cluster import KMeans
+from scipy.stats import zscore
+from sklearn.metrics import silhouette_score
 
 def load_data(file_path):
     try:
@@ -41,14 +44,6 @@ def load_data(file_path):
         print(f"Error loading data: {e}")
         sys.exit(1)
 
-def basic_analysis(data):
-    summary = {
-        "shape": data.shape,        
-        "columns": data.dtypes.to_dict(),
-        "missing_values": data.isnull().sum().to_dict(),
-        "summary_statistics": data.describe(include='all').to_dict()
-    }
-    return summary
 def select_best_columns(data, target=None, max_columns=3):
     """
     Selects the most relevant columns based on variance or correlation with the target.
@@ -74,30 +69,6 @@ def select_best_columns(data, target=None, max_columns=3):
 
     return selected_columns
 
-def detect_outliers(data):
-    isolation_forest = IsolationForest(contamination=0.05)
-    data['outliers'] = isolation_forest.fit_predict(data.select_dtypes(include=[float, int]))
-    outliers = data[data['outliers'] == -1]
-    return outliers
-
-def perform_clustering(data):
-    kmeans = KMeans(n_clusters=3, random_state=42)
-    data['cluster'] = kmeans.fit_predict(data.select_dtypes(include=[float, int]))
-    cluster_summary_text = (
-    f"Cluster 0: {len(data[data['cluster'] == 0])} points, centered at {kmeans.cluster_centers_[0]}.\n"
-    f"Cluster 1: {len(data[data['cluster'] == 1])} points, centered at {kmeans.cluster_centers_[1]}."
-    )
-    return cluster_summary_text
-
-def perform_timeseries(data):
-    decomposition = seasonal_decompose(data['time_series_column'], model='additive', period=12)
-    decomposition.plot()
-
-def perform_pca(data):
-    pca = PCA(n_components=2)
-    pca_result = pca.fit_transform(data.select_dtypes(include=[float, int]))
-    return pca
-    
 def generate_correlation_heatmap(data, output_path):
     numeric_data = data.select_dtypes(include=[np.number])
     correlation_matrix = numeric_data.corr()
@@ -107,6 +78,73 @@ def generate_correlation_heatmap(data, output_path):
     plt.savefig(output_path)
     plt.close()
     return correlation_matrix
+
+def gather_context(data, filename):
+    """
+    Gathers contextual information about the dataset.
+
+    Parameters:
+        data (pd.DataFrame): The dataset to analyze.
+        filename (str): The filename of the dataset.
+
+    Returns:
+        dict: Context for LLM interaction.
+    """
+    context = {
+        "filename": filename,
+        "columns": list(data.columns),
+        "dtypes": data.dtypes.to_dict(),
+        "summary": data.describe(include="all").to_dict(),
+    }
+    return context
+
+def interact_with_llm(task_type, data_context):
+    """
+    Interacts with the LLM to get insights, code, or suggestions based on the task type.
+
+    Parameters:
+        task_type (str): The task for the LLM ('code', 'summary', 'function_call').
+        data_context (dict): Context about the data, including filename, columns, stats, etc.
+
+    Returns:
+        str: Response from the LLM.
+    """
+    prompt = ""
+    if task_type == "code":
+        prompt = (
+            f"You are a Python data analysis assistant. I have the following dataset:\n"
+            f"Filename: {data_context['filename']}\n"
+            f"Columns: {data_context['columns']}\n"
+            f"Data types: {data_context['dtypes']}\n"
+            f"Summary statistics: {data_context['summary']}\n"
+            f"Generate Python code to analyze this dataset further and provide insights."
+        )
+    elif task_type == "summary":
+        prompt = (
+            f"You are a data analyst. Summarize the insights from this dataset:\n"
+            f"Filename: {data_context['filename']}\n"
+            f"Columns: {data_context['columns']}\n"
+            f"Data types: {data_context['dtypes']}\n"
+            f"Summary statistics: {data_context['summary']}\n"
+        )
+    elif task_type == "function_call":
+        prompt = (
+            f"You are a data scientist. I have the following dataset:\n"
+            f"Filename: {data_context['filename']}\n"
+            f"Columns: {data_context['columns']}\n"
+            f"Data types: {data_context['dtypes']}\n"
+            f"Summary statistics: {data_context['summary']}\n"
+            f"Suggest specific Python function calls or analyses that can extract more insights."
+        )
+    else:
+        raise ValueError("Invalid task type specified.")
+
+    try:
+        response = query_llm(prompt)  # Use the previously defined LLM interaction function
+        return response
+    except Exception as e:
+        print(f"Error querying LLM: {e}")
+        return None
 
 def generate_distribution_plots(data, folder_path, selected_columns):
     """
@@ -127,12 +165,12 @@ def generate_distribution_plots(data, folder_path, selected_columns):
         file_path = os.path.join(folder_path, f"distribution_{column}.png")
         plt.savefig(file_path)
         plt.close()
-
+# "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions",
 def query_llm(prompt):
     api_key = os.getenv("AIPROXY_TOKEN")
     try:
         response = requests.post(
-            "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions",
+            "https://api.openai.com/v1/chat/completions",
             headers={"Authorization": f"Bearer {api_key}"},
             json={
                 "model": "gpt-4o-mini",
@@ -161,8 +199,8 @@ def query_llm(prompt):
         print(f"Unexpected error querying LLM: {e}")
         return ""
 
-def generate_readme(data, summary, charts, llm_insights,charts_folder, output_path):
-    with open(charts_folder+"\\"+output_path, "w") as f:
+def generate_readme(data, summary, charts, llm_insights,output_path):
+    with open(output_path, "w") as f:
         f.write("# Automated Data Analysis\n\n")
         f.write("## Dataset Overview\n")
         f.write(f"Shape: {summary['shape']}\n\n")
@@ -178,6 +216,9 @@ def generate_readme(data, summary, charts, llm_insights,charts_folder, output_pa
         f.write(f"{llm_insights}\n\n")
 
         f.write("## Visualizations\n")
+        f.write("1. 'correlation_heatmap.png': Correlation heatmap of features.\n")
+        f.write("2. 'pca_explained_variance.png': PCA variance explanation.\n")
+        f.write("3. 'cluster_visualization.png': Cluster analysis scatterplot.\n")
         for chart in charts:
             f.write(f"![{chart}]({chart})\n")
 
@@ -190,6 +231,11 @@ def main():
 
     file_path = sys.argv[1]#'goodreads.csv' #sys.argv[1]
     data = load_data(file_path)
+    # Create a folder named after the dataset (without extension)
+    dataset_name = os.path.splitext(os.path.basename(file_path))[0]
+    charts_folder = dataset_name
+    os.makedirs(charts_folder, exist_ok=True)
+    
     #data_cleaned = data.dropna()
     # Separate numeric and categorical columns
     numeric_data = data.select_dtypes(include=[np.number])
@@ -208,32 +254,8 @@ def main():
     # Combine the data back together
     data_imputed = pd.concat([numeric_data_imputed, categorical_data_imputed], axis=1)
     
-    print("Performing basic analysis...")
-    summary = basic_analysis(data_imputed)
-    
-    print("Performing outliers and anomaly detection...")
-    outliers = detect_outliers(data_imputed)
-    num_outliers = len(outliers)
-    outlier_summary = f"Detected {num_outliers} outliers in dataset. These include values such as {outliers.iloc[:,0].tolist()}."
-    
-    print("Performing clustering to identify patterns...")
-    cluster_summary_text = perform_clustering(data_imputed)
-    
-    
-    print("Performing PCA analysis...")
-    pca_results = perform_pca(data_imputed)
-    # Explained variance
-    explained_variance = pca_results.explained_variance_ratio_
-    pca_summary = (
-    f"PCA reduced the data to 2 components explaining {sum(explained_variance):.2f} of the variance.\n"
-    f"Component 1: explains {explained_variance[0]:.2f} of the variance.\n"
-    f"Component 2: explains {explained_variance[1]:.2f} of the variance."
-)
-    
-    # Create a folder named after the dataset (without extension)
-    dataset_name = os.path.splitext(os.path.basename(file_path))[0]
-    charts_folder = dataset_name
-    os.makedirs(charts_folder, exist_ok=True)
+    print("Gathering dataset context...")
+    summary = gather_context(data_imputed, os.path.basename(file_path))
     
     print("Selecting the best columns for visualization...")
     target_column = None  # Replace with the target column name if applicable
@@ -248,34 +270,37 @@ def main():
     correlations['AbsCorrelation'] = correlations['Correlation'].abs()
     top_correlations = correlations.sort_values(by='AbsCorrelation', ascending=False).head(3)
 
-    # Convert to a readable summary
-    corr_summary = [
-        f"Correlation between {row['Variable1']} and {row['Variable2']} is {row['Correlation']:.2f}"
-        for _, row in top_correlations.iterrows()
-    ]
-    corr_summary_text = "\n".join(corr_summary)
-    
     generate_distribution_plots(data_imputed, charts_folder, best_columns)
 
-    print("Consulting the LLM for insights...")
-    llm_prompt = (
-        f"You are a data analyst. Based on the following dataset analysis (summary statistics, correlations, clustering results), provide actionable insights and suggest what these insights might imply for a research application.\\n"
-        f"Filename: {file_path}\\n"
-        f"Columns and Data Types: {summary['columns']}\\n"           
-        f"Sample data:{data.iloc[0]}\\n"
-        f"Summary statistics: {summary['summary_statistics']}\\n"
-        f"Correlation:{corr_summary_text}. Do you have any suggestions for further analysis or insights based on these correlations? \\n"
-        f"Outliers:{outliers}. What insights can be derived from this? Could these be errors, anomalies, or opportunities? Suggest actions or further analyses? \\n"
-        f"Clusters:{cluster_summary_text}. What insights can be derived from these clusters? How should we interpret the differences between them? Are there actionable opportunities or risks?\\n"
-        f"PCA:{pca_summary}. What can be inferred from the variance distribution? Are there hidden patterns in the data we should explore further?\\n"
-            
-    )
-    print(llm_prompt)
-    llm_insights = query_llm(llm_prompt)
+     # Ask the LLM to summarize the dataset
+    print("Asking LLM for a summary of the dataset...")
+    summary_response = interact_with_llm("summary", summary)
+    #print("Summary from LLM:")
+    #print(summary_response)
+
+    # Ask the LLM to suggest Python code for further analysis
+    print("Asking LLM for Python code suggestions...")
+    code_response = interact_with_llm("code", summary)
+    #print("Code from LLM:")
+    #print(code_response)
+
+    # Execute the suggested code (with caution)
+    try:
+        print("Executing LLM-generated code...")
+        exec(code_response)
+    except Exception as e:
+        print(f"Error executing LLM-generated code: {e}")
+
+    # Ask the LLM for specific function calls
+    print("Asking LLM for additional function call suggestions...")
+    functions_response = interact_with_llm("function_call", summary)
+    print("Function call suggestions from LLM:")
+    print(functions_response)
 
     print("Generating README.md...")
     charts = [heatmap_path] + [os.path.join(charts_folder, f"distribution_{col}.png") for col in data.select_dtypes(include=[np.number]).columns]
-    generate_readme(data, summary, charts, llm_insights,charts_folder, "README.md")
+    readme_path = os.path.join(charts_folder, "README.md")
+    generate_readme(data, summary, charts, summary_response, readme_path)
 
     print(f"Analysis complete. Results saved to README.md and visualizations saved in the '{charts_folder}' folder.")
     
