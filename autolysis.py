@@ -248,15 +248,19 @@ def generate_distribution_plots(data, output_path, selected_columns):
 
     Returns:
         None
-    """
-    plt.figure(figsize=(8, 6))
-    sns.histplot(data[selected_columns], kde=True, bins=30, color='blue', label=f"Distribution of {selected_columns}")
-    plt.title(f"Distribution of {selected_columns}")
-    plt.xlabel(selected_columns)
-    plt.ylabel("Frequency")
-    plt.legend(loc='upper right')  # Adding a legend for clarity
-    plt.savefig(output_path)
-    plt.close()
+    """ 
+    for column in selected_columns:
+        plt.figure(figsize=(8, 6))
+        sns.histplot(data[column].dropna(), kde=True, bins=30)
+        plt.title(f"Distribution of {column}")
+        file_path = os.path.join(output_path, f"distribution_{column}.png")
+        plt.xlabel(column)
+        plt.ylabel("Frequency")
+        #plt.legend(loc='upper right')  # Adding a legend for clarity
+        plt.savefig(output_path)
+        plt.savefig(file_path)
+        plt.close()
+    
 
 # "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions",https://api.openai.com/v1/chat/completions
            
