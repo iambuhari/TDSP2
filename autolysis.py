@@ -137,6 +137,8 @@ def gather_context(data, filename):
         "summary": data.describe(include="all").to_dict(),
     }
     return context
+#https://aiproxy.sanand.workers.dev/openai/v1/chat/completions
+#https://api.openai.com/openai/v1/chat/completions
 def query_llm(prompt):
     """
     Sends a prompt to the LLM API and retrieves the response.
@@ -178,7 +180,7 @@ def query_llm(prompt):
     except Exception as e:
         print(f"Unexpected error querying LLM: {e}")
         return ""
-def interact_with_llm(task_type, data_context):
+def interact_with_llm(task_type, datadata_imputed,filename):
     """
     Interacts with the LLM to get insights, code, or suggestions based on the task type.
     Based on the task type, the prompt is sent to LLM for summary/code/function call details
@@ -189,33 +191,19 @@ def interact_with_llm(task_type, data_context):
     Returns:
         str: Response from the LLM.
     """
-    prompt = ""
+    prompt = generate_dynamic_prompt(datadata_imputed,filename)
     if task_type == "code":
-        prompt = (
-            f"You are a Python data analysis assistant. I have the following dataset:\n"
-            f"Filename: {data_context['filename']}\n"
-            f"Columns: {data_context['columns']}\n"
-            #f"Data types: {data_context['dtypes']}\n"
-            f"Summary statistics: {data_context['summary']}\n"
+        prompt += (
             f"Generate Python code to analyze this dataset further. Do not add anything other than python code. \\n"
-            f"Include code to detect encoding of the csv file and use the same encoding"
-            f"Dataset may have non-numeric. Exclude them while performing numeric analysis"
+            f"Include code to detect encoding of the csv file and use the same encoding\\n"
+            f"Dataset may have non-numeric. Exclude them while performing numeric analysis\\n"
         )
     elif task_type == "summary":
-        prompt = (
-            f"You are a data analyst. Summarize the insights from this dataset:\n"
-            f"Filename: {data_context['filename']}\n"
-            f"Columns: {data_context['columns']}\n"
-            #f"Data types: {data_context['dtypes']}\n"
-            f"Summary statistics: {data_context['summary']}\n"
+        prompt += (
+           f"Provide insights and suggest three analyses in no more than 100 words."
         )
     elif task_type == "function_call":
-        prompt = (
-            f"You are a data scientist. I have the following dataset:\n"
-            f"Filename: {data_context['filename']}\n"
-            f"Columns: {data_context['columns']}\n"
-            #f"Data types: {data_context['dtypes']}\n"
-            f"Summary statistics: {data_context['summary']}\n"
+        prompt += (
             f"Suggest specific Python function calls or analyses that can extract more insights."
         )
     else:
@@ -227,6 +215,27 @@ def interact_with_llm(task_type, data_context):
     except Exception as e:
         print(f"Error querying LLM: {e}")
         return None
+def choose_analysis_methods(data):
+    """
+    Dynamically selects analysis methods based on data characteristics.
+
+    Args:
+        data (DataFrame): The dataset to analyze.
+
+    Returns:
+        list: A list of method names to apply.
+    """
+    methods = []
+    if not data.isnull().values.any():
+        methods.append("Correlation Analysis")
+    if len(data.select_dtypes(include=[np.number]).columns) > 3:
+        methods.append("PCA for dimensionality reduction")
+    if data.shape[0] > 500:
+        methods.append("Outlier detection using Isolation Forest")
+    if len(data.select_dtypes(exclude=[np.number]).columns) > 2:
+        methods.append("Clustering on categorical data")
+
+    return methods
 
 def generate_distribution_plots(data, output_path, selected_columns):    
     """
@@ -285,7 +294,60 @@ def generate_readme(data, summary, charts, llm_insights,output_path):
         f.write("3. 'cluster_visualization.png': Cluster analysis scatterplot.\n")
         for chart in charts:
             f.write(f"![{chart}]({chart})\n")
+def generate_dynamic_prompt(data_context,filename):
+    """
+    Creates a tailored prompt for the LLM based on dataset characteristics.
 
+    Args:
+        data_context (DataFrame): The dataset to analyze.
+
+    Returns:
+        str: A context-aware prompt for the LLM.
+    """
+    summary=gather_context(data_context,filename)
+    prompt = "You are a data analysis assistant. Here is a summary of the dataset:\n"
+    prompt += (
+            f"Filename: {summary['filename']}\n"
+            f"Columns: {summary['columns']}\n"
+            f"missing_values:{summary['missing_values']}"
+            f"Summary statistics: {summary['summary']}\n"
+            )
+    numeric_cols = data_context.select_dtypes(include=[np.number]).columns.tolist()
+    categorical_cols = data_context.select_dtypes(exclude=[np.number]).columns.tolist()
+
+    # Highlight imbalances
+    imbalance_warning = any(data_context[col].value_counts(normalize=True).max() > 0.9 for col in categorical_cols)
+    if imbalance_warning:
+        prompt += "- Note: One or more categorical columns are highly imbalanced.\n"
+
+    # Add suggestions for numeric columns
+    if numeric_cols:
+        prompt += f"- Numeric columns: {numeric_cols}\n"
+        prompt += "- Suggest advanced statistical analyses or feature engineering for numeric data.\n"
+
+    # Add suggestions for categorical columns
+    if categorical_cols:
+        prompt += f"- Categorical columns: {categorical_cols}\n"
+        prompt += "- Suggest clustering or pattern recognition techniques for categorical data.\n"
+
+    return prompt
+
+def validate_llm_code(code):
+    """
+    Validates the LLM-generated code by checking for restricted imports or risky operations.
+
+    Args:
+        code (str): The code string generated by the LLM.
+
+    Returns:
+        bool: True if the code is safe to execute, False otherwise.
+    """
+    restricted_keywords = ["os.system", "subprocess", "exec", "eval"]
+    for keyword in restricted_keywords:
+        if keyword in code:
+            print(f"Potentially unsafe operation detected: {keyword}")
+            return False
+    return True
 def main():
     if len(sys.argv) != 2:
        print("Usage: uv run autolysis.py <dataset.csv>")
@@ -338,26 +400,31 @@ def main():
 
      # Ask the LLM to summarize the dataset
     print("Asking LLM for a summary of the dataset...")
-    summary_response = interact_with_llm("summary", summary)
+    summary_response = interact_with_llm("summary", data_imputed,file_path)
     #print("Summary from LLM:")
     #print(summary_response)
 
     # Ask the LLM to suggest Python code for further analysis
     print("Asking LLM for Python code suggestions...")
-    code_response = interact_with_llm("code", summary)
+    code_response = interact_with_llm("code", data_imputed,file_path)
     print("Code from LLM:")
     print(code_response)
 
     # Execute the suggested code (with caution)
     try:
-        print("Executing LLM-generated code...")
-        exec(code_response)
+        print("validating LLM-generated code...")
+        valid_code = validate_llm_code(code_response)
+        if valid_code:
+            print("Executing LLM-generated code...")    
+            exec(code_response)
+        else:
+            print("unsafe code..")
     except Exception as e:
         print(f"Error executing LLM-generated code: {e}")
 
     # Ask the LLM for specific function calls
     print("Asking LLM for additional function call suggestions...")
-    functions_response = interact_with_llm("function_call", summary)
+    functions_response = interact_with_llm("function_call", data_imputed,file_path)
     print("Function call suggestions from LLM:")
     print(functions_response)
 
