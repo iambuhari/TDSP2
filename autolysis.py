@@ -10,7 +10,7 @@
 #   "requests",
 #   "chardet",
 #   "sklearn",
-#   "statsmodels"
+#   "statsmodels",
 #   "scipy"
 # ]
 # ///
