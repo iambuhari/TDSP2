@@ -34,6 +34,18 @@ from scipy.stats import zscore
 from sklearn.metrics import silhouette_score
 
 def load_data(file_path):
+    """
+    Loads a CSV file into a Pandas DataFrame while detecting and handling its character encoding.
+
+    Args:
+        file_path (str): The path to the CSV file to be loaded.
+
+    Returns:
+        DataFrame: The loaded dataset.
+
+    Exceptions:
+        Exits the program with an error message if the file cannot be loaded.
+    """
     try:
         with open(file_path, 'rb') as f:
             result = chardet.detect(f.read())
@@ -70,13 +82,40 @@ def select_best_columns(data, target=None, max_columns=3):
     return selected_columns
 
 def generate_correlation_heatmap(data, output_path):
+    """
+    Generates a heatmap showing the correlation between numeric columns in the dataset.
+
+    Args:
+        data (DataFrame): The dataset to analyze. Only numeric columns are considered.
+        output_path (str): The file path to save the generated heatmap image.
+
+    Returns:
+        DataFrame: The correlation matrix used to generate the heatmap.
+    """
+    # Select only numeric columns from the dataset for correlation analysis
     numeric_data = data.select_dtypes(include=[np.number])
+    
+    # Compute the correlation matrix for the selected numeric data
     correlation_matrix = numeric_data.corr()
+    
+    # Plot the heatmap
     plt.figure(figsize=(10, 8))
-    sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', fmt=".2f")
+    sns.heatmap(
+        correlation_matrix, 
+        annot=True, 
+        cmap='coolwarm', 
+        fmt=".2f",
+        xticklabels=numeric_data.columns, 
+        yticklabels=numeric_data.columns
+    )
     plt.title("Correlation Heatmap")
+    plt.xlabel("Features")
+    plt.ylabel("Features")
+    
+    # Save the heatmap as an image
     plt.savefig(output_path)
     plt.close()
+    
     return correlation_matrix
 
 def gather_context(data, filename):
@@ -98,11 +137,51 @@ def gather_context(data, filename):
         "summary": data.describe(include="all").to_dict(),
     }
     return context
+def query_llm(prompt):
+    """
+    Sends a prompt to the LLM API and retrieves the response.
 
+    Args:
+        prompt (str): The prompt to send to the LLM for analysis.
+
+    Returns:
+        str: The content of the LLM's response, or an empty string if an error occurs.
+    """
+    api_key = os.getenv("AIPROXY_TOKEN")
+    try:
+        response = requests.post(
+            "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {"role": "system", "content": "You are a data analysis assistant."},
+                    {"role": "user", "content": prompt}
+                ]
+            }
+        )
+        # Parse the JSON response
+        response_json = response.json()
+        print("Response content:", response.json())
+
+        # Check for errors in the response
+        if "error" in response_json:
+            print(f"API returned an error: {response_json['error']}")
+            return ""
+
+        # Access the content safely
+        return response_json.get("choices", [{}])[0].get("message", {}).get("content", "")
+    
+    except requests.RequestException as e:
+        print(f"Network error querying LLM: {e}")
+        return ""
+    except Exception as e:
+        print(f"Unexpected error querying LLM: {e}")
+        return ""
 def interact_with_llm(task_type, data_context):
     """
     Interacts with the LLM to get insights, code, or suggestions based on the task type.
-
+    Based on the task type, the prompt is sent to LLM for summary/code/function call details
     Parameters:
         task_type (str): The task for the LLM ('code', 'summary', 'function_call').
         data_context (dict): Context about the data, including filename, columns, stats, etc.
@@ -149,60 +228,42 @@ def interact_with_llm(task_type, data_context):
         print(f"Error querying LLM: {e}")
         return None
 
-def generate_distribution_plots(data, folder_path, selected_columns):
+def generate_distribution_plots(data, output_path, selected_columns):    
     """
-    Generates distribution plots for the selected columns.
+    Generates a distribution chart for a given numeric column in the dataset.
 
-    Parameters:
-        data (pd.DataFrame): The dataset to analyze.
-        folder_path (str): Path to save the charts.
-        selected_columns (list): List of column names to plot.
+    Args:
+        data (DataFrame): The dataset containing the column.
+        column (str): The column to analyze.
+        output_path (str): The file path to save the generated chart image.
 
     Returns:
         None
     """
-    for column in selected_columns:
-        plt.figure(figsize=(8, 6))
-        sns.histplot(data[column].dropna(), kde=True, bins=30)
-        plt.title(f"Distribution of {column}")
-        file_path = os.path.join(folder_path, f"distribution_{column}.png")
-        plt.savefig(file_path)
-        plt.close()
+    plt.figure(figsize=(8, 6))
+    sns.histplot(data[selected_columns], kde=True, bins=30, color='blue', label=f"Distribution of {selected_columns}")
+    plt.title(f"Distribution of {selected_columns}")
+    plt.xlabel(selected_columns)
+    plt.ylabel("Frequency")
+    plt.legend(loc='upper right')  # Adding a legend for clarity
+    plt.savefig(output_path)
+    plt.close()
+
 # "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions",https://api.openai.com/v1/chat/completions
-def query_llm(prompt):
-    api_key = os.getenv("AIPROXY_TOKEN")
-    try:
-        response = requests.post(
-            "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}"},
-            json={
-                "model": "gpt-4o-mini",
-                "messages": [
-                    {"role": "system", "content": "You are a data analysis assistant."},
-                    {"role": "user", "content": prompt}
-                ]
-            }
-        )
-        # Parse the JSON response
-        response_json = response.json()
-        print("Response content:", response.json())
-
-        # Check for errors in the response
-        if "error" in response_json:
-            print(f"API returned an error: {response_json['error']}")
-            return ""
-
-        # Access the content safely
-        return response_json.get("choices", [{}])[0].get("message", {}).get("content", "")
-    
-    except requests.RequestException as e:
-        print(f"Network error querying LLM: {e}")
-        return ""
-    except Exception as e:
-        print(f"Unexpected error querying LLM: {e}")
-        return ""
-
 def generate_readme(data, summary, charts, llm_insights,output_path):
+    """
+    Generates a README.md file summarizing the results of data analysis.
+
+    Args:
+        data (DataFrame): The dataset being analyzed.
+        summary (dict): Summary statistics and metadata about the dataset.
+        charts (list): List of file paths to generated visualizations.
+        llm_insights (str): Analytical insights provided by the LLM.
+        output_path (str): The path where the README file will be saved.
+
+    Returns:
+        None
+    """
     with open(output_path, "w") as f:
         f.write("# Automated Data Analysis\n\n")
         f.write("## Dataset Overview\n")
@@ -303,7 +364,7 @@ def main():
     print("Generating README.md...")
     charts = [heatmap_path] + [os.path.join(charts_folder, f"distribution_{col}.png") for col in data.select_dtypes(include=[np.number]).columns]
     readme_path = os.path.join(charts_folder, "README.md")
-    generate_readme(data, summary, charts, summary_response, readme_path)
+    generate_readme(data_imputed, summary, charts, summary_response, readme_path)
 
     print(f"Analysis complete. Results saved to README.md and visualizations saved in the '{charts_folder}' folder.")
     
