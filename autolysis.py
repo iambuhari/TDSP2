@@ -11,7 +11,9 @@
 #   "chardet",
 #   "scikit-learn",
 #   "statsmodels",
-#   "scipy"
+#   "scipy",
+#   "tiktoken",
+#   "tenacity"
 # ]
 # ///
 import os
@@ -24,6 +26,7 @@ import openai
 from dotenv import load_dotenv
 import requests
 import chardet
+import json
 from sklearn.ensemble import IsolationForest
 from sklearn.cluster import KMeans
 from statsmodels.tsa.seasonal import seasonal_decompose
@@ -32,6 +35,18 @@ from sklearn.impute import SimpleImputer
 from sklearn.cluster import KMeans
 from scipy.stats import zscore
 from sklearn.metrics import silhouette_score
+import tiktoken
+import ast
+import traceback
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+retry_count = 0
+max_retries = 3
+
+#https://aiproxy.sanand.workers.dev/openai/v1/chat/completions
+#https://api.openai.com/v1/chat/completions
+#OPENAIAPIURL='https://api.openai.com/v1/chat/completions'
+OPENAIAPIURL='https://aiproxy.sanand.workers.dev/openai/v1/chat/completions'
 
 def load_data(file_path):
     """
@@ -137,8 +152,7 @@ def gather_context(data, filename):
         "summary": data.describe(include="all").to_dict(),
     }
     return context
-#https://aiproxy.sanand.workers.dev/openai/v1/chat/completions
-#https://api.openai.com/v1/chat/completions
+
 def query_llm(prompt):
     """
     Sends a prompt to the LLM API and retrieves the response.
@@ -152,7 +166,7 @@ def query_llm(prompt):
     api_key = os.getenv("AIPROXY_TOKEN")
     try:
         response = requests.post(
-            "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions",
+            OPENAIAPIURL,#"https://api.openai.com/v1/chat/completions",
             headers={"Authorization": f"Bearer {api_key}"},
             json={
                 "model": "gpt-4o-mini",
@@ -194,9 +208,16 @@ def interact_with_llm(task_type, datadata_imputed,filename):
     prompt = generate_dynamic_prompt(datadata_imputed,filename)
     if task_type == "code":
         prompt += (
-            f"Generate Python code to analyze this dataset further. Do not add anything other than python code. \\n"
-            f"Include code to detect encoding of the csv file and use the same encoding\\n"
-            f"Dataset may have non-numeric. Exclude them while performing numeric analysis\\n"
+            f"Generate Python code for # 1. Correlation Matrix for numeric features, return correlation_matrix\\n"
+            f"# 2. PCA for dimensionality reduction to analyze this dataset further, return pca_result\\n"
+            #f"# 3. K-Means Clustering for categorical features, return df['cluster'] \\n"
+            f"Generate only python code only. Add code to detect the encoding using chardet.detect and use for opening the file.\\n"  
+            f"Filter the non-numeric column from the dataset before performing correlation, pca and k-means analysis\\n"                   
+            f"fill missing values with the most frequence value"
+            f"Automatically identifies categorical columns.\\n"
+            #f"Encodes them appropriately for K-Means clustering (e.g., using One-Hot or Label Encoding)\\n"
+            #f"Performs K-Means clustering on the processed DataFrame.\\n"
+            #f"Handles missing values gracefully.\\n"
         )
     elif task_type == "summary":
         prompt += (
@@ -204,7 +225,7 @@ def interact_with_llm(task_type, datadata_imputed,filename):
         )
     elif task_type == "function_call":
         prompt += (
-            f"Suggest specific Python function calls or analyses that can extract more insights."
+            f"Suggest top 3 specific Python function calls or analyses that can extract more insights"
         )
     else:
         raise ValueError("Invalid task type specified.")
@@ -237,6 +258,108 @@ def choose_analysis_methods(data):
 
     return methods
 
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+@retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=1, max=10))
+def execute_code_with_tenacity(code):
+    
+    try:
+        result_prompt = """ 
+# Example analysis logic: 
+result = "" 
+        """
+
+        if result_prompt not in code:
+            code_prompt = result_prompt + "\n" + code
+        else:
+            code_prompt = code
+        code_prompt = code_prompt.replace("```","# Code")
+        print(code_prompt)
+        ast.parse(code_prompt)  # Validate the code        
+        local_vars = {}
+        exec(code_prompt, {}, local_vars)  # Execute the code in a safe context
+        # Return multiple output variables from the local_variables dictionary
+        correlation_matrix = local_vars.get('correlation_matrix', None)
+        pca_result = local_vars.get('pca_result', None)
+        #dfCluster = local_vars.get('df', None)
+        return correlation_matrix,pca_result#,dfCluster
+    except Exception as e:
+        raise RuntimeError(f"Error executing code: {e}")
+    except SyntaxError as e:
+        error_message = traceback.format_exc()
+        print(error_message)
+        corrected_code = query_llm_for_correction(code, error_message)
+        if not corrected_code:
+            fallback_on_failure(code, error_message)
+            return  # Exit if fallback is reached
+        return execute_code_with_tenacity(corrected_code)  # Retry with corrected code
+    except Exception as e:
+        print(f"Execution error: {e}")
+        raise  # Trigger retry
+
+def fallback_on_failure(code, error_message):
+    """
+    Log and skip the failed task as a fallback.
+    """
+    print(f"Fallback initiated for failed code:\n{code}")
+    print(f"Error details: {error_message}")
+    # Save details for later analysis
+    with open("failed_code_log.txt", "a") as log_file:
+        log_file.write(f"Code:\n{code}\nError:\n{error_message}\n\n")
+
+def validate_and_execute_with_retries(code):
+    global retry_count
+    while retry_count < max_retries:
+        try:
+            validate_and_execute(code)
+            break
+        except Exception:
+            retry_count += 1
+            if retry_count >= max_retries:
+                print("Max retries reached. Aborting.")
+
+def validate_and_execute(code):
+    """
+    Validate and execute LLM-generated code. If there's a syntax error, request corrections.
+    """
+    try:
+        # Validate syntax using ast
+        ast.parse(code)
+        print("Code is syntactically correct. Executing...")
+        
+        # Execute the code
+        exec(code)
+    except SyntaxError as e:
+        print(f"Syntax error detected: {e}")
+        print("Requesting LLM for a corrected version...")
+        
+        # Generate a prompt to fix the code
+        error_message = traceback.format_exc()
+        print(f"Error in Code{error_message}")
+        corrected_code = query_llm_for_correction(code, error_message)
+        
+        if corrected_code:
+            print("Retrying with corrected code...")
+            validate_and_execute(corrected_code)
+    except Exception as e:
+        print(f"Error executing code: {e}")
+
+def query_llm_for_correction(code, error_message):
+    """
+    Ask the LLM to correct the code based on the error message.
+    """
+    print(f"Error in Code{error_message}")
+    prompt = (
+        f"The following Python code contains a syntax error:\n\n"
+        f"```\n{code}\n```\n\n"
+        f"The error message is:\n\n"
+        f"```\n{error_message}\n```\n\n"
+        "Please provide a corrected version of the code."
+    )
+    
+    corrected_code = query_llm(prompt)  # Replace with your LLM querying function
+    return corrected_code
+
 def generate_distribution_plots(data, output_path, selected_columns):    
     """
     Generates a distribution chart for a given numeric column in the dataset.
@@ -249,16 +372,17 @@ def generate_distribution_plots(data, output_path, selected_columns):
     Returns:
         None
     """
-    plt.figure(figsize=(8, 6))
-    sns.histplot(data[selected_columns], kde=True, bins=30, color='blue', label=f"Distribution of {selected_columns}")
-    plt.title(f"Distribution of {selected_columns}")
-    plt.xlabel(selected_columns)
-    plt.ylabel("Frequency")
-    plt.legend(loc='upper right')  # Adding a legend for clarity
-    plt.savefig(output_path)
-    plt.close()
-
-# "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions",https://api.openai.com/v1/chat/completions
+    for column in selected_columns:
+        plt.figure(figsize=(8, 6))
+        sns.histplot(data[column].dropna(), kde=True, bins=30)
+        plt.title(f"Distribution of {column}")
+        file_path = os.path.join(output_path, f"distribution_{column}.png")
+        plt.xlabel(column)
+        plt.ylabel("Frequency")
+        #plt.legend(loc='upper right')  # Adding a legend for clarity
+        plt.savefig(output_path)
+        plt.savefig(file_path)
+        plt.close()
            
 def generate_dynamic_prompt(data_context,filename):
     """
@@ -271,11 +395,15 @@ def generate_dynamic_prompt(data_context,filename):
         str: A context-aware prompt for the LLM.
     """
     summary=gather_context(data_context,filename)
-    prompt = "You are a data analysis assistant. Here is a summary of the dataset:\n"
+    # Extract the first 5 key-value pairs from the dictionary
+    first_five_columns = list(summary['columns'].items())[:5]
+
+    # Format the key-value pairs as a string
+    formatted_columns = ', '.join([f"{key}: {value}" for key, value in first_five_columns])
+    prompt = "You are a data analysis assistant.\n"
     prompt += (
-            f"Filename: {summary['filename']}\n"
-            f"Columns: {summary['columns']}\n"
-            f"missing_values:{summary['missing_values']}"
+            f"Name of the dataset is '{summary['filename']}' has Columns:{formatted_columns}.\n"
+            #f"missing_values:{summary['missing_values']}"
             f"Summary statistics: {summary['summary']}\n"
             )
     numeric_cols = data_context.select_dtypes(include=[np.number]).columns.tolist()
@@ -289,14 +417,96 @@ def generate_dynamic_prompt(data_context,filename):
     # Add suggestions for numeric columns
     if numeric_cols:
         prompt += f"- Numeric columns: {numeric_cols}\n"
-        prompt += "- Suggest advanced statistical analyses or feature engineering for numeric data.\n"
+        prompt += "- Suggest advanced statistical analyses or feature engineering for numeric data  in not more than 150 words.\n"
 
     # Add suggestions for categorical columns
     if categorical_cols:
         prompt += f"- Categorical columns: {categorical_cols}\n"
-        prompt += "- Suggest clustering or pattern recognition techniques for categorical data.\n"
-
+        prompt += "- Suggest clustering or pattern recognition techniques for categorical data  in not more than 150 words.\n"
+        
+    print(f"Token count:{evaluate_prompt_efficiency(prompt)}")
+    
     return prompt
+def agentic_workflow(data):
+    """
+    Implements a multi-step workflow for data analysis using the LLM.
+
+    Args:
+        data (DataFrame): The dataset to analyze.
+
+    Returns:
+        None
+    """
+    numeric_data = data.select_dtypes(include=[np.number])
+    # Step 1: Initial data exploration
+    prompt = "Provide an exploratory analysis of this dataset  in not more than 150 words"
+    prompt += f"Summary statistics: {data.describe()}"
+    prompt += f"Correlation: {numeric_data.corr()}"
+    insights = query_llm(prompt)
+
+    # Step 2: Generate targeted insights
+    follow_up_prompt = f"Based on your analysis: {insights}\nSuggest specific analyses or transformations in not more than 200 words."
+    suggestions = query_llm(follow_up_prompt)
+
+    # Execute suggestions and collect results
+    analysis_results = []
+    # Step 3: Execute suggestions iteratively
+    for suggestion in suggestions.split('\n'):
+        if len(suggestion)>0:
+            result=execute_analysis_suggestion(data, suggestion)
+            analysis_results.append(result)
+    return analysis_results
+
+def execute_analysis_suggestion(data, suggestion):
+    """
+    Executes a single suggestion from the LLM and returns the analysis summary.
+
+    Args:
+        data (DataFrame): The dataset to analyze.
+        suggestion (str): Analysis suggestion to execute.
+
+    Returns:
+        str: A summary of the analysis performed.
+    """
+    if "outliers" in suggestion.lower():
+        from sklearn.ensemble import IsolationForest
+        numeric_data = data.select_dtypes(include=[np.number])
+        outliers = IsolationForest().fit_predict(numeric_data)
+        num_outliers = sum(outliers == -1)
+        return f"Outlier Detection: Identified {num_outliers} outliers in the dataset."
+    
+    elif "pca" in suggestion.lower():
+        from sklearn.decomposition import PCA
+        numeric_data = data.select_dtypes(include=[np.number])
+        pca = PCA(n_components=2)
+        pca_result = pca.fit_transform(numeric_data)
+        explained_variance = pca.explained_variance_ratio_
+        return (f"PCA Analysis: Reduced the dataset to 2 components. "
+                f"Explained variance ratios are {explained_variance[0]:.2f} and {explained_variance[1]:.2f}.")
+    
+    elif "correlation" in suggestion.lower():
+        numeric_data = data.select_dtypes(include=[np.number])
+        correlation_matrix = numeric_data.corr()
+        return "Correlation Analysis: Computed the correlation matrix for numeric features."
+    
+    else:
+        return f"Analysis '{suggestion}' could not be executed or is not supported."
+
+def evaluate_prompt_efficiency(prompt):
+    """
+    Evaluates the token usage of a given prompt.
+
+    Args:
+        prompt (str): The LLM prompt to evaluate.
+
+    Returns:
+        int: The number of tokens used.
+    """
+    # Assuming a tokenizer is available for the LLM being used
+    
+    tokenizer = tiktoken.encoding_for_model("gpt-4o-mini")
+    tokens = len(tokenizer.encode(prompt))
+    return tokens
 
 def validate_llm_code(code):
     """
@@ -389,21 +599,29 @@ def apply_LLM_analysis_generate_readme(data_imputed,file_path,charts_folder,best
     code_response = interact_with_llm("code", data_imputed,file_path)
     
     # Execute the suggested code (with caution)
-    execute_LLM_code(code_response)
+    correlation_matrix,pca_result = execute_code_with_tenacity(code_response)
     
+   
+    code_exec_insight = f"Correlation Matrix:\n{correlation_matrix}\n"
+    code_exec_insight += f"PCA variance:\n{pca_result}\n"
+    #code_exec_insight += f"Kmeans Cluster:{cluster_summary}\n"
+        
     # Ask the LLM for specific function calls
     print("Asking LLM for additional function call suggestions...")
     functions_response = interact_with_llm("function_call", data_imputed,file_path)
+    
+    #Implements a multi-step workflow for data analysis using the LLM. 
+    analysis_results= agentic_workflow(data_imputed)
     
     #Generate image of the distribution
     charts = [os.path.join(charts_folder, f"distribution_{col}.png") for col in data_imputed.select_dtypes(include=[np.number]).columns if col in best_columns]
     print("Generating README.md...")
     
-    generate_readme(data_imputed, summary, charts, summary_response,code_response,functions_response, charts_folder)
+    generate_readme(data_imputed, summary, charts, summary_response,code_exec_insight,functions_response, analysis_results,charts_folder)
 
     print(f"Analysis complete. Results saved to README.md and visualizations saved in the '{charts_folder}' folder.")
     
-def generate_readme(data, summary, charts, summary_response,code_response,functions_response,charts_folder):
+def generate_readme(data, summary, charts, summary_response,code_exec_insight,functions_response,analysis_results,charts_folder):
     """
     Generates a README.md file summarizing the results of data analysis.
 
@@ -434,9 +652,13 @@ def generate_readme(data, summary, charts, summary_response,code_response,functi
 
         f.write("\n## Insights from the LLM\n")
         f.write(f"{summary_response}\n\n")
+        f.write("\n## Analysis Results\n")
+        for result in analysis_results:
+            f.write(f"- {result}\n")
         
-        f.write("\n## Python Code suggested by LLM for further analysis\n")
-        f.write(f"{code_response}\n\n")
+        #f.write("\n## Python Code suggested by LLM for further analysis\n")
+        new_content = "\n## LLS Code Execution Results\n" + json.dumps(code_exec_insight, indent=4) + "\n"
+        f.write(f"{new_content}\n\n")
         
         f.write("\n## Function API suggested by LLM for further analysis and insights\n")
         f.write(f"{functions_response}\n\n")
