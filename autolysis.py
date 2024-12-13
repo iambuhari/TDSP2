@@ -39,6 +39,7 @@ import tiktoken
 import ast
 import traceback
 from tenacity import retry, stop_after_attempt, wait_exponential
+import base64
 
 retry_count = 0
 max_retries = 3
@@ -96,7 +97,7 @@ def select_best_columns(data, target=None, max_columns=3):
 
     return selected_columns
 
-def generate_correlation_heatmap(data, output_path):
+def generate_correlation_heatmap(correlation_matrix, numeric_data,output_path):
     """
     Generates a heatmap showing the correlation between numeric columns in the dataset.
 
@@ -107,12 +108,7 @@ def generate_correlation_heatmap(data, output_path):
     Returns:
         DataFrame: The correlation matrix used to generate the heatmap.
     """
-    # Select only numeric columns from the dataset for correlation analysis
-    numeric_data = data.select_dtypes(include=[np.number])
-    
-    # Compute the correlation matrix for the selected numeric data
-    correlation_matrix = numeric_data.corr()
-    
+      
     # Plot the heatmap
     plt.figure(figsize=(10, 8))
     sns.heatmap(
@@ -131,7 +127,9 @@ def generate_correlation_heatmap(data, output_path):
     plt.savefig(output_path)
     plt.close()
     
-    return correlation_matrix
+    insights = call_llm_for_vision(output_path, "Analyze the correlation image and share the top 3 insights.")
+    
+    return insights
 
 def gather_context(data, filename):
     """
@@ -209,9 +207,10 @@ def interact_with_llm(task_type, datadata_imputed,filename):
     if task_type == "code":
         prompt += (
             f"Generate Python code for # 1. Correlation Matrix for numeric features, return correlation_matrix\\n"
-            f"# 2. PCA for dimensionality reduction to analyze this dataset further, return pca_result\\n"
+            f"# 2. PCA for dimensionality reduction to analyze this dataset further, return pca_result\\n"            
             #f"# 3. K-Means Clustering for categorical features, return df['cluster'] \\n"
             f"Generate only python code only. Add code to detect the encoding using chardet.detect and use for opening the file.\\n"  
+            f"Filter the warnings for the category=DeprecationWarning\\n"
             f"Filter the non-numeric column from the dataset before performing correlation, pca and k-means analysis\\n"                   
             f"Fill missing values with the most frequence value"
             f"Exclude NaNs data for PCA "
@@ -219,6 +218,7 @@ def interact_with_llm(task_type, datadata_imputed,filename):
             #f"Encodes them appropriately for K-Means clustering (e.g., using One-Hot or Label Encoding)\\n"
             #f"Performs K-Means clustering on the processed DataFrame.\\n"
             #f"Handles missing values gracefully.\\n"
+            
         )
     elif task_type == "summary":
         prompt += (
@@ -261,9 +261,14 @@ def choose_analysis_methods(data):
 
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-@retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=1, max=10))
-def execute_code_with_tenacity(code):
-    
+#@retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=1, max=10))
+def execute_code_with_tenacity(code,retry_count):
+    """
+    Eexcute code with tenacity function executes the code that was provided by LLM
+    If any syntax error while execution, the error will be sent to LLM along with the code for a fix
+    this shall be retried for 5 times
+    otherwise thrown e
+    """
     try:
         result_prompt = """ 
 # Example analysis logic: 
@@ -285,19 +290,19 @@ result = ""
         #dfCluster = local_vars.get('df', None)
         return correlation_matrix,pca_result#,dfCluster
     except Exception as e:
-        raise RuntimeError(f"Error executing code: {e}")
+        return "",""
+        #return f"Error executing code: {e}"
     except SyntaxError as e:
         error_message = traceback.format_exc()
         print(error_message)
+        if retry_count > max_retries:
+            return "",""
         corrected_code = query_llm_for_correction(code, error_message)
         if not corrected_code:
             fallback_on_failure(code, error_message)
-            return  # Exit if fallback is reached
-        return execute_code_with_tenacity(corrected_code)  # Retry with corrected code
-    except Exception as e:
-        print(f"Execution error: {e}")
-        raise  # Trigger retry
-
+            return  "",""# Exit if fallback is reached
+        return execute_code_with_tenacity(corrected_code,retry_count+1)  # Retry with corrected code
+    
 def fallback_on_failure(code, error_message):
     """
     Log and skip the failed task as a fallback.
@@ -373,6 +378,7 @@ def generate_distribution_plots(data, output_path, selected_columns):
     Returns:
         None
     """
+    insights=[]
     for column in selected_columns:
         plt.figure(figsize=(8, 6))
         sns.histplot(data[column].dropna(), kde=True, bins=30)
@@ -381,9 +387,12 @@ def generate_distribution_plots(data, output_path, selected_columns):
         plt.xlabel(column)
         plt.ylabel("Frequency")
         #plt.legend(loc='upper right')  # Adding a legend for clarity
-        plt.savefig(output_path)
+        #plt.savefig(output_path)
         plt.savefig(file_path)
         plt.close()
+        insight = call_llm_for_vision(file_path, "Analyze the distribution image and share the insights 10 words.")
+        insights.append(f"Distribution_{column}.png insights:\n{insight}")
+    return insights
            
 def generate_dynamic_prompt(data_context,filename):
     """
@@ -558,8 +567,13 @@ def impute_data(raw_data):
 def do_correlation_analysis(data_imputed,charts_folder):
     # Generate and save a correlation heatmap for the imputed data, and extract top correlations
     heatmap_path = os.path.join(charts_folder, "correlation_heatmap.png")
+     # Select only numeric columns from the dataset for correlation analysis
+    numeric_data = data_imputed.select_dtypes(include=[np.number])
+    
+    # Compute the correlation matrix for the selected numeric data
+    correlation_matrix = numeric_data.corr()
     # Create a correlation heatmap and save it as a PNG image
-    correlation_matrix = generate_correlation_heatmap(data_imputed, heatmap_path)
+    insights = generate_correlation_heatmap(correlation_matrix,numeric_data, heatmap_path)
     
     # Unstack the correlation matrix and reset index for better readability
     correlations = correlation_matrix.unstack().reset_index()
@@ -574,6 +588,8 @@ def do_correlation_analysis(data_imputed,charts_folder):
     # Sort correlations by absolute value and extract the top 3 correlations
     top_correlations = correlations.sort_values(by='AbsCorrelation', ascending=False).head(3)
     
+    return top_correlations,insights
+    
 def execute_LLM_code(code_response):
     # Validate and execute the code generated by a large language model (LLM)
 
@@ -587,9 +603,12 @@ def execute_LLM_code(code_response):
             print("unsafe code..")
     except Exception as e:
         print(f"Error executing LLM-generated code: {e}")
-def apply_LLM_analysis_generate_readme(data_imputed,file_path,charts_folder,best_columns):
+def apply_LLM_analysis_generate_readme(data_imputed,file_path,charts_folder,best_columns,dist_plots_insights):
     print("Gathering dataset context...")
     summary = gather_context(data_imputed, os.path.basename(file_path))
+    
+    print("Doing Correlation analysis")
+    top_correlations,correlations_insight = do_correlation_analysis(data_imputed,charts_folder)
     
     # Ask the LLM to summarize the dataset
     print("Asking LLM for a summary of the dataset...")
@@ -600,7 +619,7 @@ def apply_LLM_analysis_generate_readme(data_imputed,file_path,charts_folder,best
     code_response = interact_with_llm("code", data_imputed,file_path)
     
     # Execute the suggested code (with caution)
-    correlation_matrix,pca_result = execute_code_with_tenacity(code_response)
+    correlation_matrix,pca_result = execute_code_with_tenacity(code_response,0)
     
    
     code_exec_insight = f"Correlation Matrix:\n{correlation_matrix}\n"
@@ -618,11 +637,80 @@ def apply_LLM_analysis_generate_readme(data_imputed,file_path,charts_folder,best
     charts = [os.path.join(charts_folder, f"distribution_{col}.png") for col in data_imputed.select_dtypes(include=[np.number]).columns if col in best_columns]
     print("Generating README.md...")
     
-    generate_readme(data_imputed, summary, charts, summary_response,code_exec_insight,functions_response, analysis_results,charts_folder)
+    generate_readme(data_imputed, summary, charts, summary_response,code_exec_insight,functions_response, analysis_results,top_correlations,correlations_insight,dist_plots_insights,charts_folder)
 
     print(f"Analysis complete. Results saved to README.md and visualizations saved in the '{charts_folder}' folder.")
-    
-def generate_readme(data, summary, charts, summary_response,code_exec_insight,functions_response,analysis_results,charts_folder):
+
+
+def call_llm_for_vision(image_path, prompt):
+    """
+    Calls the LLM for vision analysis with the given image and prompt.
+
+    Parameters:
+        image_path (str): Path to the image to analyze.
+        prompt (str): Instruction or query for the LLM about the image.
+
+    Returns:
+        str: Response from the LLM with insights about the image.
+    """
+    try:
+        api_key = os.getenv("AIPROXY_TOKEN")
+        if not api_key:
+            raise ValueError("API key not found. Set the OPENAI_API_KEY environment variable.")
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}"
+        }
+
+        # Read the image file as binary data
+        with open(image_path, 'rb') as image_file:
+            image_data = image_file.read()
+
+        # Encode the image data to base64
+        base64_image = base64.b64encode(image_data).decode('utf-8')
+        data = {
+            "model": "gpt-4o-mini",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            # Let's modify the prompt to give the LLM some creativity
+                            "text": "analyze the image and share the top 3 insights in 10 words"
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "detail": "low",
+                                # Instead of passing the image URL, we create a base64 encoded data URL
+                                "url": f"data:image/jpeg;base64,{base64_image}"
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+        response = requests.post(OPENAIAPIURL, headers=headers, json=data)
+
+        if response.status_code != 200:             
+            print(f"Request failed with status code: {response.status_code}")
+            #print(response.text)
+
+
+        if response.status_code == 200:
+            response_json = response.json()
+            return response_json["choices"][0]["message"]["content"]
+        else:
+            print(response.text)      
+            return f"Request failed with status code: {response.status_code}"
+            
+    except Exception as e:
+        print(f"Error during vision analysis: {e}")
+        return None
+
+def generate_readme(data, summary, charts, summary_response,code_exec_insight,functions_response,analysis_results,top_correlations,correlations_insight,dist_plots_insights,charts_folder):
     """
     Generates a README.md file summarizing the results of data analysis.
 
@@ -653,6 +741,11 @@ def generate_readme(data, summary, charts, summary_response,code_exec_insight,fu
 
         f.write("\n## Insights from the LLM\n")
         f.write(f"{summary_response}\n\n")
+        f.write("\n###Correlation Analysis###\n")
+        f.write(f"Top Correlations:{top_correlations}")
+        f.write(f"\nInsights from LLM-Vision:\n")
+        f.write(f"{correlations_insight}\n\n")
+        
         f.write("\n## Analysis Results\n")
         for result in analysis_results:
             f.write(f"- {result}\n")
@@ -664,9 +757,18 @@ def generate_readme(data, summary, charts, summary_response,code_exec_insight,fu
         f.write("\n## Function API suggested by LLM for further analysis and insights\n")
         f.write(f"{functions_response}\n\n")
 
-        f.write("## Visualizations\n")
-        for chart in charts:
+        f.write("## Visualizations and Insights from the distribution plo\n")
+        for i in range(len(charts)):
+            chart=charts[i]
             f.write(f"![{chart}]({chart})\n")
+            insight= dist_plots_insights[i]
+            f.write(f"{insight}\n")
+       # f.write("Insights from the distribution plot\n")
+       # for index, insight in enumerate(dist_plots_insights, start=1):
+       #     f.write(f"{insight}\n")
+        
+        f.write("End of the analysis")
+            
 def main():
     if len(sys.argv) != 2:
        print("Usage: uv run autolysis.py <dataset.csv>")
@@ -687,11 +789,10 @@ def main():
     best_columns = select_best_columns(data_imputed, target=target_column, max_columns=3)
     
     print("Generating visualizations...")
-    do_correlation_analysis(data_imputed,charts_folder)
+       
+    dist_plots_insights = generate_distribution_plots(data_imputed, charts_folder, best_columns)
     
-    generate_distribution_plots(data_imputed, charts_folder, best_columns)
-    
-    apply_LLM_analysis_generate_readme(data_imputed,file_path,charts_folder,best_columns)
+    apply_LLM_analysis_generate_readme(data_imputed,file_path,charts_folder,best_columns,dist_plots_insights)
 
 if __name__ == "__main__":
     main()
