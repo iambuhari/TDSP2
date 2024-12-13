@@ -667,8 +667,10 @@ def call_llm_for_vision(image_path, prompt):
         with open(image_path, 'rb') as image_file:
             image_data = image_file.read()
 
+        image_file.close()
         # Encode the image data to base64
         base64_image = base64.b64encode(image_data).decode('utf-8')
+        
         data = {
             "model": "gpt-4o-mini",
             "messages": [
